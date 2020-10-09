@@ -285,3 +285,5 @@ tags
 *.code-workspace
 
 # End of https://www.toptal.com/developers/gitignore/api/vscode,python,jupyternotebooks,vim,pycharm
+.vscode/settings.json
+.vscode
