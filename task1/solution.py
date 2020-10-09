@@ -94,7 +94,7 @@ def main():
     M = Wrapper_Model_Torch()
     #M.fit_model(train_x, train_y)
     #plot_2d(train_x[0:1000,:], train_y[0:1000])
-    M.fit_model(train_x[0:3000,:], train_y[0:3000])
+    M.fit_model(train_x[0:5000,:], train_y[0:5000])
     prediction = M.predict(test_x)
 
     print(prediction)

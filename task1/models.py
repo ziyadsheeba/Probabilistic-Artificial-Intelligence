@@ -84,17 +84,26 @@ class Wrapper_Model_Torch():
         self.model_.eval()
         self.likelihood_.eval()
 
-        # Test points are regularly spaced along [0,1]
+        test_x_tensor = torch.from_numpy(test_x).float()
+
+        
         # Make predictions by feeding model through likelihood
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
-            y = self.likelihood_(self.model_(test_x))
-        return y
+            y = self.likelihood_(self.model_(test_x_tensor))
+        return y.mean #? TODO what to return
 
     def fit_model(self, train_x, train_y):
-        train_x_tensor = torch.tensor(train_x, dtype=torch.double)
-        train_y_tensor = torch.tensor(train_y, dtype=torch.double)
+        train_x = train_x.astype('d')
+        train_y = train_y.astype('d')
 
-        training_iter = 2
+        train_x_tensor = torch.from_numpy(train_x).float()
+        train_y_tensor = torch.from_numpy(train_y).float()
+
+  
+        #train_x_tensor = torch.tensor(train_x, dtype=torch.double)
+        #train_y_tensor = torch.tensor(train_y, dtype=torch.double)
+
+        training_iter = 40
 
   
 
@@ -121,6 +130,10 @@ class Wrapper_Model_Torch():
             # Output from model
             output = self.model_(train_x_tensor)
             # Calc loss and backprop gradients
+
+            #print(train_y_tensor.dtype)
+
+
             loss = -mll(output, train_y_tensor)
             loss.backward()
             print('Iter %d/%d - Loss: %.3f   lengthscale: %.3f   noise: %.3f' % (
