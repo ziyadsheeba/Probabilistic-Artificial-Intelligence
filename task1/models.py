@@ -6,6 +6,9 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, RBF, Matern, RationalQuadratic, ExpSineSquared
 from sklearn.kernel_approximation import Nystroem, RBFSampler
 
+import torch
+import gpytorch
+
 
 
 ## Constants for Cost function
@@ -51,6 +54,84 @@ class GP_SK_1():
         print("Learned kernel: \n {}".format(self.estimator.kernel_))
         print("Score for training data : {}".format(self.training_score_))
         # TODO use crossvalidation on predictive performance max marginal likelihood of the data (sci kit log_marginal_likelihood(theta) )see
+
+
+class GP_Torch_1(gpytorch.models.ExactGP):
+
+    def __init__(self, train_x, train_y, likelihood):
+        super(GP_Torch_1, self).__init__(train_x, train_y, likelihood)
+        self.mean_module = gpytorch.means.ConstantMean() # TODO change if necessary
+        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
+     
+    def forward(self, x): 
+        """ Returns MultivariateNormal with prior mean and covariance conditioned at x """
+        mean_x = self.mean_module(x)
+        covar_x = self.covar_module(x)
+        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+
+
+
+
+class Wrapper_Model_Torch():
+    """ Used in order to preserve model class and method structure, s.t. checker still works """
+    def __init__(self):
+        self.likelihood_ = None
+        self.model_ = None
+
+    def predict(self, test_x):
+
+        # Get into evaluation (predictive posterior) mode
+        self.model_.eval()
+        self.likelihood_.eval()
+
+        # Test points are regularly spaced along [0,1]
+        # Make predictions by feeding model through likelihood
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            y = self.likelihood_(self.model_(test_x))
+        return y
+
+    def fit_model(self, train_x, train_y):
+        train_x_tensor = torch.tensor(train_x, dtype=torch.double)
+        train_y_tensor = torch.tensor(train_y, dtype=torch.double)
+
+        training_iter = 2
+
+  
+
+
+        self.likelihood_ = gpytorch.likelihoods.GaussianLikelihood()
+        self.model_ = GP_Torch_1(train_x_tensor, train_y_tensor , self.likelihood_)
+
+  
+
+        # --------- taken form gpytorch website ----
+        # Find optimal model hyperparameters
+        self.model_.train()
+        self.likelihood_.train()
+
+        # Use the adam optimizer
+        optimizer = torch.optim.Adam(self.model_.parameters(), lr=0.1)  # Includes GaussianLikelihood parameters
+
+        # "Loss" for GPs - the marginal log likelihood
+        mll = gpytorch.mlls.ExactMarginalLogLikelihood(self.likelihood_, self.model_)
+
+        for i in range(training_iter):
+            # Zero gradients from previous iteration
+            optimizer.zero_grad()
+            # Output from model
+            output = self.model_(train_x_tensor)
+            # Calc loss and backprop gradients
+            loss = -mll(output, train_y_tensor)
+            loss.backward()
+            print('Iter %d/%d - Loss: %.3f   lengthscale: %.3f   noise: %.3f' % (
+                i + 1, training_iter, loss.item(),
+                self.model_.covar_module.base_kernel.lengthscale.item(),
+                self.model_.likelihood.noise.item()
+            ))
+            optimizer.step()
+
+
+
 
 
 class DefaultModel():

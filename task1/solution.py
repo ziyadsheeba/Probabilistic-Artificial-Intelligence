@@ -90,10 +90,11 @@ def main():
     test_x = np.loadtxt(test_x_name, delimiter=',')
 
     # M = Model() TODO insert best model into this file
-    M = GP_SK_1()
+    #M = GP_SK_1()
+    M = Wrapper_Model_Torch()
     #M.fit_model(train_x, train_y)
     #plot_2d(train_x[0:1000,:], train_y[0:1000])
-    M.fit_model(train_x[0:1000,:], train_y[0:1000])
+    M.fit_model(train_x[0:3000,:], train_y[0:3000])
     prediction = M.predict(test_x)
 
     print(prediction)
