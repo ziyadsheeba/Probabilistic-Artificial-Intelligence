@@ -1,4 +1,11 @@
 import numpy as np
+from sklearn.gaussian_process.kernels import DotProduct, WhiteKernel, RBF
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.base import RegressorMixin
+from sklearn.base import BaseEstimator
+from sklearn.model_selection import train_test_split
+# import matplotlib.pyplot as plt
+# from matplotlib import cm
 
 ## Constant for Cost function
 THRESHOLD = 0.5
@@ -53,27 +60,49 @@ It uses predictions to compare to the ground truth using the cost_function above
 """
 
 
-class Model():
+class Model(BaseEstimator,RegressorMixin):
 
     def __init__(self):
         """
             TODO: enter your code here
         """
-        pass
+        kernel = DotProduct() + WhiteKernel() + RBF()
+        self.model = GaussianProcessRegressor(kernel=kernel, random_state=0)
 
     def predict(self, test_x):
         """
             TODO: enter your code here
         """
         ## dummy code below
-        y = np.ones(test_x.shape[0]) * THRESHOLD - 0.00001
+        y = self.model.predict(test_x)
         return y
 
     def fit_model(self, train_x, train_y):
         """
              TODO: enter your code here
         """
-        pass
+        train_x, X_test, train_y, y_test = train_test_split(train_x, train_y, 
+                                            shuffle = True, train_size=0.1, random_state=1)
+        self.model.fit( train_x, train_y)
+        print("Finished fitting.")
+        
+    # def plot_Gauss(self, X, Y):
+    #     x = X[:,0]
+    #     y = X[:,1]
+    #     z = Y
+    #     xp, yp = np.mgrid[np.min(x):np.max(x):100j, np.min(y):np.max(y):100j ]
+    #     xy = np.column_stack([xp.flat, yp.flat])
+    #     zp = self.model.predict(xy, return_std=False)
+        
+    #     zp = zp.reshape(xp.shape)
+        
+    #     fig = plt.figure()
+    #     ax = fig.add_subplot(111, projection='3d')
+        
+    #     # Plot gaussian
+    #     ax.scatter(x, y, z, c='r', marker = "+", label='data', alpha = 0.2)
+    #     ax.plot_surface(xp, yp, zp, rstride=1, cstride=1, alpha=0.7, cmap=cm.coolwarm)
+    #     plt.show()
 
 
 def main():
@@ -89,10 +118,12 @@ def main():
 
     M = Model()
     M.fit_model(train_x, train_y)
-    prediction = M.predict(test_x)
+    prediction = M.predict(train_x)
 
     print(prediction)
-
+    # M.plot_Gauss(train_x, train_y)    
+    print(np.sqrt(np.mean((prediction-train_y)**2)))
+    # print(cost_function(train_y, prediction))
 
 if __name__ == "__main__":
     main()
