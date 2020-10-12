@@ -1,6 +1,6 @@
 import numpy as np
 from models import *
-from graphics import *
+#from graphics import *
 
 ## Constant for Cost function
 THRESHOLD = 0.5
@@ -90,15 +90,14 @@ def main():
     test_x = np.loadtxt(test_x_name, delimiter=',')
 
     # M = Model() TODO insert best model into this file
-    #M = GP_SK_1()
-    M = Wrapper_Model_Torch()
-    #M.fit_model(train_x, train_y)
+    M = GP_SK_1()
+    #M = Wrapper_Model_Torch()
+    M.fit_model(train_x, train_y)
     #plot_2d(train_x[0:1000,:], train_y[0:1000])
-    M.fit_model(train_x[0:5000,:], train_y[0:5000])
+    #M.fit_model(train_x[0:9000,:], train_y[0:9000])
     prediction = M.predict(test_x)
-
-    print(prediction)
-    plot_3d(test_x, prediction)
+    #print(prediction)
+    #plot_3d(test_x, prediction)
 
 
 if __name__ == "__main__":

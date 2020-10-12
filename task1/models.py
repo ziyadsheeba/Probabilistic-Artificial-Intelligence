@@ -3,8 +3,12 @@ import math
 import time
 
 from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn import linear_model
 from sklearn.gaussian_process.kernels import ConstantKernel, RBF, Matern, RationalQuadratic, ExpSineSquared
 from sklearn.kernel_approximation import Nystroem, RBFSampler
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
+from sklearn.metrics import log_loss
 
 import torch
 import gpytorch
@@ -30,29 +34,60 @@ You can add new methods, and make changes. The checker script performs:
 It uses predictions to compare to the ground truth using the cost_function above.
 """
 
+def Matern_test(length_scale=3):
+    return Matern(length_scale=length_scale[0])
+
+
 
 class GP_SK_1():
 
     def __init__(self):
-        #TODO dont fixate kernel here
-        self.kernel_ = RBF(10)
-        self.training_score_ = math.inf # coefficient of determination R^2, best value 0 
-        self.estimator = GaussianProcessRegressor(kernel=self.kernel_,random_state=0, n_restarts_optimizer=10)
+
+        self.model = None
+
+
+        self.hyper_param_grid = [
+            {'nystroem__kernel': ['rbf', 'laplacian', 'linear', 'sigmoid', 'cosine'] ,'nystroem__kernel_params':[{'length_scale': 1}, {'length_scale': 0.1},  
+            {'length_scale': 0.01},  {'length_scale': 0.05}, {'length_scale': 0.025}, {'length_scale': 0.005}],  },    
+        ]        
+        # Kernel approximation
+        #self.feature_map = Nystroem(self.kernel_, n_components=100)
+        
+        #self.estimator = GaussianProcessRegressor(kernel=ConstantKernel(), random_state=0, n_restarts_optimizer=10)
+        self.estimator = Pipeline([('nystroem', Nystroem(n_components=150)),('brr', linear_model.BayesianRidge(compute_score=True))])
+
+        print(self.estimator.get_params().keys())
+
+        self.grid_search = GridSearchCV(self.estimator, self.hyper_param_grid, cv=5, return_train_score=True, verbose=2, refit=True)
+
 
     def predict(self, test_x):
-        y, y_cov = self.estimator.predict(test_x, return_cov=True)
-        #print("Covariance of prediction : \n {}".format(y_cov))
+        y = 0
+        y, y_std = self.model.predict(test_x, return_std=True)
+        print("Standard Deviation of prediction : \n {}".format(y_std))
         return y
 
     def fit_model(self, train_x, train_y):
         print("Starting model fitting...")
         print("Dimensions of training data X : {},  y : {}".format(train_x.shape, train_y.shape))
-        self.estimator.fit(train_x, train_y)
-        start_time = time.time()
-        self.training_score_ = self.estimator.score(train_x, train_y)
-        print("Time for fitting the model: {:3f}".format(time.time() - start_time))
-        print("Learned kernel: \n {}".format(self.estimator.kernel_))
-        print("Score for training data : {}".format(self.training_score_))
+        
+
+        self.grid_search.fit(train_x, train_y)
+
+        self.model = self.grid_search.best_estimator_
+        print(self.model)
+        #print(self.grid_search.cv_results_)
+
+        # TODO test if correct
+        #transformed_data = self.feature_map.fit_transform(train_x)
+
+        #self.estimator.fit(transformed_data, train_y)
+        #self.estimator.fit(train_x, train_y)
+        #start_time = time.time()
+        #self.training_score_ = self.estimator.scores_
+        #print("Time for fitting the model: {:3f}".format(time.time() - start_time))
+        #print("Learned kernel: \n {}".format(self.estimator.kernel_))
+        #print("Score for training data : {}".format(self.training_score_))
         # TODO use crossvalidation on predictive performance max marginal likelihood of the data (sci kit log_marginal_likelihood(theta) )see
 
 
@@ -103,9 +138,7 @@ class Wrapper_Model_Torch():
         #train_x_tensor = torch.tensor(train_x, dtype=torch.double)
         #train_y_tensor = torch.tensor(train_y, dtype=torch.double)
 
-        training_iter = 40
-
-  
+        training_iter = 50  
 
 
         self.likelihood_ = gpytorch.likelihoods.GaussianLikelihood()
@@ -132,8 +165,6 @@ class Wrapper_Model_Torch():
             # Calc loss and backprop gradients
 
             #print(train_y_tensor.dtype)
-
-
             loss = -mll(output, train_y_tensor)
             loss.backward()
             print('Iter %d/%d - Loss: %.3f   lengthscale: %.3f   noise: %.3f' % (
