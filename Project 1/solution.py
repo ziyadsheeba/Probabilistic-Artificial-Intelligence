@@ -76,33 +76,44 @@ class Model(BaseEstimator,RegressorMixin):
         #######################################
         
         # Model to predict on the dense domain ( x >= -0.5)
-        # estimator = [('trans', Nystroem(random_state = 2)), ('clf', BayesianRidge(verbose = 2))]
-        # pipe = Pipeline(estimator)
+        estimator = [('trans', Nystroem(random_state = 2)), ('clf', BayesianRidge(verbose = 2))]
+        pipe = Pipeline(estimator)
         # parameters = {'trans__gamma':np.logspace(0.1,5, num = 3, base = 10),
-        #               'trans__n_components':np.logspace(0,3, num = 3, base = 10).astype(int)}
+                      # 'trans__n_components':np.logspace(0,3, num = 3, base = 10).astype(int)}
         # self.model = GridSearchCV(pipe,parameters, verbose = 2, n_jobs = -1, scoring = cost_function)
-        # pipe.set_params( trans__gamma = 10, trans__n_components = 200)
+        pipe.set_params( trans__gamma = 100, trans__n_components = 500)
         # self.model = pipe
         
         # Model to predict on the sparse domain (x < -0.5)
-        self.model = GaussianProcessRegressor(kernel = Matern() + WhiteKernel() + RBF(),
+        self.model = [GaussianProcessRegressor(kernel = Matern() + WhiteKernel() + RBF(),
                                               n_restarts_optimizer = 4,
-                                              normalize_y = True)
+                                              normalize_y = True),
+                      pipe]
 
     def predict(self, test_x):
 
         ##################################
         ### TODO: Predict in the 2 domains
         ##################################
-        y, y_std = self.model.predict(test_x, return_std = True)
+        # Predict with full GP
+        y_0, y_std_0 = self.model[0].predict(test_x, return_std = True)
+        y_0 = y_0 + 1.3*y_std_0
+        # Predict with approximate GP
+        y_1, y_std_1 = self.model[1].predict(test_x, return_std = True)
+        y_1 = y_1 + 1.3*y_std_1
+        #Choose predictions based on domain
+        sparse_domain = test_x[:,0] > -0.5
+        y = sparse_domain*y_0 + np.invert(sparse_domain)*y_1
         
-        return y + 1.3*y_std
+        return y
 
     def fit_model(self, train_x, train_y):
         ######################################
         ########### TODO: Fit the dense model
         ######################################
-        self.model.fit( train_x[train_x[:,0] > -0.5], train_y[train_x[:,0] > -0.5])
+
+        self.model[0].fit( train_x[train_x[:,0] > -0.5], train_y[train_x[:,0] > -0.5])
+        self.model[1].fit( train_x[train_x[:,0] <= -0.5], train_y[train_x[:,0] <= -0.5])
         
     def plot_Gauss(self, X, Y, test_x):
         """
@@ -157,7 +168,7 @@ def main():
     M.fit_model(X_train, y_train)
     
     M.plot_Gauss(train_x, train_y, test_x)    
-    print(cost_function(M, X_test, y_test))
+    print(cost_function(y_test, M.predict(X_test)))
 
 if __name__ == "__main__":
     main()
