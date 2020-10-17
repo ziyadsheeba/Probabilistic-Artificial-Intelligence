@@ -55,27 +55,14 @@ It uses predictions to compare to the ground truth using the cost_function above
 """
 
 
-class Model():
+class Model(GP_SK_1):
+    pass
 
-    def __init__(self):
-        """
-            TODO: enter your code here
-        """
-        pass
+ 
 
-    def predict(self, test_x):
-        """
-            TODO: enter your code here
-        """
-        ## dummy code below
-        y = np.ones(test_x.shape[0]) * THRESHOLD - 0.00001
-        return y
 
-    def fit_model(self, train_x, train_y):
-        """
-             TODO: enter your code here
-        """
-        pass
+
+
 
 
 def main():
@@ -95,9 +82,14 @@ def main():
     M.fit_model(train_x, train_y)
     #plot_2d(train_x[0:1000,:], train_y[0:1000])
     #M.fit_model(train_x[0:9000,:], train_y[0:9000])
-    prediction = M.predict(test_x)
+    #prediction = M.predict(test_x)
     #print(prediction)
     #plot_3d(test_x, prediction)
+
+    analyze_prediction(M, train_x, train_y)
+    plot_sample_points(M,train_x)
+    plot_x1_slice(M, train_x, 0.4)
+    
 
 
 if __name__ == "__main__":

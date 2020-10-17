@@ -67,8 +67,64 @@ def plot_2d(x,y):
     plt.show()
     return fig
 
-def plot_x1_slice(x, y, x1_pos):
-    pass
+def plot_x1_slice(model, x, x2_value):
+    x1 = x[:,0]
+    x2 = x[:,1]
+    x1max = np.max(x1)
+    x1min = np.min(x2)
+    x2max = np.max(x2)
+    x2min = np.min(x2)
+    numPoints = 100
+
+    x_1_axis = np.linspace(x1max, x1min,num=numPoints)
+    x_2_axis = np.repeat(x2_value,numPoints).T
+    
+    x_sel = np.column_stack([x_1_axis, x_2_axis])
+    y, y_std  = model.predict(x_sel, return_std=True)
+
+    ci =  1.96 * y_std
+    fig, ax = plt.subplots()
+    ax.plot(x_1_axis,y)
+    ax.fill_between(x_1_axis, (y-ci), (y+ci), color='b', alpha=.1)
+    ax.set_xlabel('x_1')
+    ax.set_ylabel('y')
+  
+    
+    plt.show()
+
+
+
+
+def plot_sample_points(model, x):
+    x1 = x[:,0]
+    x2 = x[:,1]
+    x1max = np.max(x1)
+    x1min = np.min(x2)
+    x2max = np.max(x2)
+    x2min = np.min(x2)
+    numPoints = 100j
+
+    x1, x2 = np.mgrid[x1min:x1max:numPoints, x2min:x2max:numPoints]
+    x = np.column_stack([x1.flat, x2.flat])
+
+
+    y = model.predict(x)    
+    y = y.reshape(x1.shape)
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    colormap = 'RdYlBu_r'
+    #ax.scatter(x1, x2, 20, c=y-THRESHOLD, cmap=colormap)
+    ax.set_xlabel('x_1')
+    ax.set_ylabel('x_2')
+    
+
+    ax.plot_surface(x1,x2,y, cmap=colormap)
+
+    plt.show()
+
+
 
 
 

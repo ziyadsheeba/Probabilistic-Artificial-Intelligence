@@ -1,18 +1,21 @@
 import numpy as np
 import math
 import time
+import statistics
 
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn import linear_model
-from sklearn.gaussian_process.kernels import ConstantKernel, RBF, Matern, RationalQuadratic, ExpSineSquared
+from sklearn.gaussian_process.kernels import ConstantKernel, RBF, Matern, RationalQuadratic, ExpSineSquared, WhiteKernel, Sum
 from sklearn.kernel_approximation import Nystroem, RBFSampler
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
 from sklearn.metrics import log_loss
 
+
 import torch
 import gpytorch
 
+#from skopt import gp_minimize
 
 
 ## Constants for Cost function
@@ -34,48 +37,165 @@ You can add new methods, and make changes. The checker script performs:
 It uses predictions to compare to the ground truth using the cost_function above.
 """
 
-def Matern_test(length_scale=3):
-    return Matern(length_scale=length_scale[0])
+def cost_function(true, predicted):
+    """
+        true: true values in 1D numpy array
+        predicted: predicted values in 1D numpy array
+
+        return: float
+    """
+    cost = (true - predicted)**2
+
+    # true above threshold (case 1)
+    mask = true > THRESHOLD
+    mask_w1 = np.logical_and(predicted>=true,mask)
+    mask_w2 = np.logical_and(np.logical_and(predicted<true,predicted >=THRESHOLD),mask)
+    mask_w3 = np.logical_and(predicted<THRESHOLD,mask)
+
+    cost[mask_w1] = cost[mask_w1]*W1
+    cost[mask_w2] = cost[mask_w2]*W2
+    cost[mask_w3] = cost[mask_w3]*W3
+
+    # true value below threshold (case 2)
+    mask = true <= THRESHOLD
+    mask_w1 = np.logical_and(predicted>true,mask)
+    mask_w2 = np.logical_and(predicted<=true,mask)
+
+    cost[mask_w1] = cost[mask_w1]*W1
+    cost[mask_w2] = cost[mask_w2]*W2
+
+    reward = W4*np.logical_and(predicted < THRESHOLD,true<THRESHOLD)
+    if reward is None:
+        reward = 0
+    return np.mean(cost) - np.mean(reward)
 
 
 
 class GP_SK_1():
 
     def __init__(self):
-
-        self.model = None
-
-
+        self.estimator = None
+        # DENSE DATA REGION ESTIMATOR
+        # Hyperparameter for grid search 
         self.hyper_param_grid = [
-            {'nystroem__kernel': ['rbf', 'laplacian', 'linear', 'sigmoid', 'cosine'] ,'nystroem__kernel_params':[{'length_scale': 1}, {'length_scale': 0.1},  
-            {'length_scale': 0.01},  {'length_scale': 0.05}, {'length_scale': 0.025}, {'length_scale': 0.005}],  },    
-        ]        
-        # Kernel approximation
-        #self.feature_map = Nystroem(self.kernel_, n_components=100)
+            {'nystroem__kernel': [o*Sum(Matern(length_scale=lm,nu=n), c*WhiteKernel())
+                             for kc in np.logspace(-4,2,20)
+                             for lm in np.logspace(-1, 0.1, 20)
+                             for n in np.logspace(-2, 1.5, 20)
+                             for c in np.logspace(-3,1,10)
+                             for o in np.logspace(-2,1,10)] ,}
+        ]    
+        # Kernel approximation for dense data region        
+        self.feature_map = Nystroem(n_components=110)        
+        #self.estimator = linear_model.BayesianRidge(kernel=self.feature_map, random_state=0, n_restarts_optimizer=10)        
+        #Pipeline
+        self.pipeline = Pipeline([('nystroem', self.feature_map), ('brr', linear_model.BayesianRidge(compute_score=True))])
+        dense_estimator = RandomizedSearchCV(self.pipeline, self.hyper_param_grid, random_state = 3, cv=5, return_train_score=True, verbose=1, refit=True, n_jobs=2, n_iter=5)
         
-        #self.estimator = GaussianProcessRegressor(kernel=ConstantKernel(), random_state=0, n_restarts_optimizer=10)
-        self.estimator = Pipeline([('nystroem', Nystroem(n_components=150)),('brr', linear_model.BayesianRidge(compute_score=True))])
+        # SPARSE DATA REGION ESTIMATOR
+        self.kernel =  1.0 * Matern(length_scale=0.90, nu=4.0) + 0.1*WhiteKernel() 
+        sparse_estimator = GaussianProcessRegressor(kernel=self.kernel)
+        
+        #self.estimator = GridSearchCV(self.pipeline, self.hyper_param_grid, cv=5, return_train_score=True, verbose=1, refit=True, n_jobs=2)
+        self.estimator = [dense_estimator, sparse_estimator]
 
-        print(self.estimator.get_params().keys())
-
-        self.grid_search = GridSearchCV(self.estimator, self.hyper_param_grid, cv=5, return_train_score=True, verbose=2, refit=True)
 
 
-    def predict(self, test_x):
-        y = 0
-        y, y_std = self.model.predict(test_x, return_std=True)
-        print("Standard Deviation of prediction : \n {}".format(y_std))
-        return y
+    def predict(self, test_x, return_std=False):
+        n = test_x.shape[0]
+        y_mean = np.zeros((n,))
+        y_std = np.zeros((n,))
+        
+        sparse_region_idx =tuple([(test_x[:,0] >= -0.4)])
+        dense_region_idx = tuple([(test_x[:,0] < -0.4)])
+
+        #middle_region_idx =tuple([(test_x[:,0] > -0.4)&(test_x[:,0] <= 0.6)])
+
+ 
+
+        
+
+        
+        #y_mean[dense_region_idx], y_std[dense_region_idx] = self.estimator[0].predict(test_x[dense_region_idx], return_std=True) 
+
+
+        #y_mean[sparse_region_idx], y_std[sparse_region_idx] = self.estimator[1].predict(test_x[sparse_region_idx], return_std=True)
+
+        y_mean_1 = self.estimator[0].predict(test_x)
+        y_std_1 = np.zeros(y_mean_1.shape[0])+0.001# assume we are sure in dense region
+        y_mean_2, y_std_2 = self.estimator[1].predict(test_x, return_std=True)
+
+        y_mean[dense_region_idx] = y_mean_1[dense_region_idx] 
+        y_mean[sparse_region_idx] = y_mean_2[sparse_region_idx]
+        #y_mean[middle_region_idx] = *y_mean_2[middle_region_idx] +*y_mean_1[middle_region_idx]
+        #y_std[middle_region_idx] =  y_std_1[dense_region_idx]
+        y_std[dense_region_idx] = y_std_1[dense_region_idx]
+        y_std[sparse_region_idx] =  y_std_2[sparse_region_idx]
+
+
+  
+        
+
+        print("Avg. Standard Deviation of prediction : \n {}".format(np.mean(y_std)))
+
+        
+        # Bayesian Decision theory with asymmetric cost, see IML slides
+        
+        c1 = 100 #TODO change depend on cost function
+        
+        c2 = 1
+        c  = c1/(c1+c2)
+        n = test_x.shape[0]
+        y = np.zeros((n,))
+        for i in range(n) :
+            y[i] = y_mean[i] + y_std[i]*statistics.NormalDist(y_mean[i], y_std[i]).inv_cdf(c)    
+        
+
+
+        # Bayesian decision theory with cost function - doesnt run
+        """
+        y = np.zeros((n,))
+        for k in range(n) :
+            y_range = np.linspace(abs(y_mean[k] - y_std[k]), y_mean[k] + y_std[k], 100)
+            min_cost = math.inf
+            best_idx = 0
+            for i in range(y_range.shape[0]):
+                y_cost = cost_function(y_mean[k],y_range[i])
+                if( y_mean[k]!=y_range[i] & y_cost < min_cost):
+                    min_cost = y_cost
+                    best_idx = i
+            y[k] = y_range[best_idx]
+        """
+
+        if(return_std) :
+            return y, y_std
+        else :
+            return y
+
 
     def fit_model(self, train_x, train_y):
         print("Starting model fitting...")
-        print("Dimensions of training data X : {},  y : {}".format(train_x.shape, train_y.shape))
+        print("Dimensions of training data X : {},  y : {}".format(train_x.shape, train_y.shape))  
+
+        sparse_region_idx =tuple([(train_x[:,0] >=-0.4)])
+        dense_region_idx = tuple([(train_x[:,0] < -0.4)])
+
+
+        print("Fitting dense region estimator")
+        print("-> Training size : {}".format(train_x[dense_region_idx].shape))
+        self.estimator[0].fit(train_x[dense_region_idx], train_y[dense_region_idx])
+       
+
+        print("Fitting sparse region estimator")
+        print("-> Training size : {}".format(train_x[sparse_region_idx].shape))
+        #print(self.estimator[0].best_estimator_.get_params(['kernel']))
+        #self.estimator[1].set_params(['kernel' : self.estimator[0].best_estimator_.get_params(['nystroem__kernel']))
+        self.estimator[1].fit(train_x[sparse_region_idx], train_y[sparse_region_idx])
+        print("Best model : {}".format(self.estimator[0].best_estimator_))
         
 
-        self.grid_search.fit(train_x, train_y)
+        
 
-        self.model = self.grid_search.best_estimator_
-        print(self.model)
         #print(self.grid_search.cv_results_)
 
         # TODO test if correct
@@ -91,11 +211,15 @@ class GP_SK_1():
         # TODO use crossvalidation on predictive performance max marginal likelihood of the data (sci kit log_marginal_likelihood(theta) )see
 
 
+
+
+
+
 class GP_Torch_1(gpytorch.models.ExactGP):
 
     def __init__(self, train_x, train_y, likelihood):
         super(GP_Torch_1, self).__init__(train_x, train_y, likelihood)
-        self.mean_module = gpytorch.means.ConstantMean() # TODO change if necessary
+        self.mean_module = gpytorch.means.ZeroMean() # TODO change if necessary
         self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
      
     def forward(self, x): 
@@ -191,7 +315,8 @@ class DefaultModel():
             TODO: enter your code here
         """
         ## dummy code below
-        y = np.ones(test_x.shape[0]) * THRESHOLD - 0.00001
+        y = np.sin(test_x[:,0]+3*test_x[:,1])
+        #y = np.ones(test_x.shape[0]) * THRESHOLD - 0.00001
         return y
 
     def fit_model(self, train_x, train_y):
@@ -202,4 +327,12 @@ class DefaultModel():
 
 
 
+
+def analyze_prediction(M, x_test, y_test) :
+    y_predicted = M.predict(x_test)
+    above_threshold_index = np.where(np.any(y_test>THRESHOLD))
+    y_above_threshold = y_test[above_threshold_index]
+    y_predicted_sameidx = y_predicted[above_threshold_index]
+    num_wrongly_predicted = np.count_nonzero(y_predicted_sameidx < y_above_threshold)
+    print('Number of wrongly underpredicted over THRESHOLD labels  : {} '.format(num_wrongly_predicted))
 
