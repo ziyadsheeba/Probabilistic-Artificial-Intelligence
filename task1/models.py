@@ -15,6 +15,11 @@ from sklearn.metrics import log_loss
 import torch
 import gpytorch
 
+
+
+
+
+
 #from skopt import gp_minimize
 
 
@@ -75,7 +80,7 @@ class GP_SK_1():
 
     def __init__(self):
         self.estimator = None
-        # DENSE DATA REGION ESTIMATOR
+        ## DENSE DATA REGION ESTIMATOR
         # Hyperparameter for grid search 
         self.hyper_param_grid = [
             {'nystroem__kernel': [o*Sum(Matern(length_scale=lm,nu=n), RBF())
@@ -83,17 +88,25 @@ class GP_SK_1():
                              for n in np.logspace(-2, 0.4, 50)
                              for o in np.logspace(-2,1,20)] ,}
         ]    
+
         # Kernel approximation for dense data region        
-        self.feature_map = Nystroem(n_components=115)        
-        #self.estimator = linear_model.BayesianRidge(kernel=self.feature_map, random_state=0, n_restarts_optimizer=10)        
+        self.feature_map = Nystroem(n_components=1000, random_state=2)        
         #Pipeline
-        self.pipeline = Pipeline([('nystroem', self.feature_map), ('brr', linear_model.BayesianRidge(compute_score=True))])
-        dense_estimator = RandomizedSearchCV(self.pipeline, self.hyper_param_grid, random_state = 3, cv=2, return_train_score=True, verbose=2, refit=True, n_jobs=2, n_iter=2)
-        # SPARSE DATA REGION ESTIMATOR
-        self.kernel =  1.83**2 * Matern(length_scale=1.08, nu=1.43) + 0.1*WhiteKernel() 
-        sparse_estimator = GaussianProcessRegressor(kernel=self.kernel)
+        self.pipeline = Pipeline([('nystroem', self.feature_map),
+                                 ('brr', linear_model.BayesianRidge(compute_score=True))])
         
-        #self.estimator = GridSearchCV(self.pipeline, self.hyper_param_grid, cv=5, return_train_score=True, verbose=1, refit=True, n_jobs=2)
+        self.pipeline.set_params(nystroem__gamma = 100)
+
+
+        #dense_estimator = RandomizedSearchCV(self.pipeline, self.hyper_param_grid, random_state = 3, cv=2, return_train_score=True, verbose=2, refit=True, n_jobs=2, n_iter=2)
+        #dense_estimator = GridSearchCV(self.pipeline, self.hyper_param_grid, cv=5, return_train_score=True, verbose=1, refit=True, n_jobs=2)
+        dense_estimator = self.pipeline
+
+        ## SPARSE DATA REGION ESTIMATOR
+        self.kernel =  Matern() + WhiteKernel() + RBF()
+        sparse_estimator = GaussianProcessRegressor(kernel=self.kernel, normalize_y=True, n_restarts_optimizer = 4)
+        
+
         self.estimator = [dense_estimator, sparse_estimator]
 
 
@@ -102,75 +115,59 @@ class GP_SK_1():
         n = test_x.shape[0]
         y_mean = np.zeros((n,))
         y_std = np.zeros((n,))
-        
-        sparse_region_idx =tuple([(test_x[:,0] >= -0.5)])
-        dense_region_idx = tuple([(test_x[:,0] < -0.5)])
 
-        #middle_region_idx =tuple([(test_x[:,0] > -0.4)&(test_x[:,0] <= 0.6)])     
-        #y_mean[dense_region_idx], y_std[dense_region_idx] = self.estimator[0].predict(test_x[dense_region_idx], return_std=True) 
-        #y_mean[sparse_region_idx], y_std[sparse_region_idx] = self.estimator[1].predict(test_x[sparse_region_idx], return_std=True)
+                
 
-        y_mean_1 = self.estimator[0].predict(test_x)
-        y_std_1 = np.zeros(y_mean_1.shape[0])+0.001# assume we are sure in dense region
-        y_mean_2, y_std_2 = self.estimator[1].predict(test_x, return_std=True)
+        # Dense region
+        y_1, y_std_1 = self.estimator[0].predict(test_x, return_std = True)
+        print(np.max(y_std_1))
+        y_1 = y_1 + 1.3*np.exp(-(y_1 - THRESHOLD)**2)*y_std_1
+        # Sparse region
+        y_0, y_std_0 = self.estimator[1].predict(test_x, return_std = True)
+        y_0 = y_0 +  1.3*np.exp(-(y_0 - THRESHOLD)**2)*y_std_0
 
-        y_mean[dense_region_idx] = y_mean_1[dense_region_idx] 
-        y_mean[sparse_region_idx] = y_mean_2[sparse_region_idx]
-        #y_mean[middle_region_idx] = *y_mean_2[middle_region_idx] +*y_mean_1[middle_region_idx]
-        #y_std[middle_region_idx] =  y_std_1[dense_region_idx]
-        y_std[dense_region_idx] = y_std_1[dense_region_idx]
-        y_std[sparse_region_idx] =  y_std_2[sparse_region_idx]         
-
-        print("Avg. Standard Deviation of prediction : \n {}".format(np.mean(y_std)))
-
-        
+        sparse_domain = test_x[:,0] > -0.5
+        y = sparse_domain*y_0 + np.invert(sparse_domain)*y_1
+        y_std =  sparse_domain*y_std_0 + np.invert(sparse_domain)*y_std_1    
+                
         # Bayesian Decision theory with asymmetric cost, see IML slides
-        
+        """
         c1 = 100 #TODO change depending on cost function        
         c2 = 1
         c  = c1/(c1+c2)
         n = test_x.shape[0]
-        y = np.zeros((n,))
         for i in range(n) :
-            y[i] = y_mean[i] + y_std[i]*statistics.NormalDist(y_mean[i], y_std[i]).inv_cdf(c)        
+            y[i] = y[i] + y_std[i]*statistics.NormalDist(y[i], y_std[i]).inv_cdf(c)        
 
+        """
         if(return_std) :
             return y, y_std
         else :
-            return y
+            return y    
 
 
     def fit_model(self, train_x, train_y):
+
         print("Starting model fitting...")
         print("Dimensions of training data X : {},  y : {}".format(train_x.shape, train_y.shape))  
 
-        sparse_region_idx  = np.where((train_x[:,0] >=-0.5))[0]
-        dense_region_idx   = np.where((train_x[:,0] < -0.5))[0]
-
-        print("Fitting dense region estimator")
-        print("-> Training size : {}".format(train_x[dense_region_idx,:].shape))
-        self.estimator[0].fit(train_x[dense_region_idx,:], train_y[dense_region_idx]) 
-        print("Best model : {}".format(self.estimator[0].best_estimator_))          
-
         print("Fitting sparse region estimator")
-        print("-> Training size : {} + 1000 subsamples".format(train_x[sparse_region_idx,:].shape))
-        
+        self.estimator[1].fit( train_x[train_x[:,0] > -0.5], train_y[train_x[:,0] > -0.5])
+        print("Fitting dense region estimator")
+        self.estimator[0].fit( train_x[train_x[:,0] <= -0.5], train_y[train_x[:,0] <= -0.5])
+
+        """       
         # Subsample
-        samples_idx = np.random.choice(dense_region_idx, size = (1000, ) , replace = True)
+        samples_idx = np.random.choice(dense_region_idx, size = (100, ) , replace = True)
         self.estimator[1].fit(np.concatenate((train_x[sparse_region_idx,:], train_x[samples_idx,:])),
                                   np.concatenate((train_y[sparse_region_idx],train_y[samples_idx])))
 
         #print(self.estimator[0].best_estimator_.get_params(['kernel']))
         #self.estimator[1].set_params(['kernel' : self.estimator[0].best_estimator_.get_params(['nystroem__kernel']))
         #self.estimator[1].fit(train_x[sparse_region_idx], train_y[sparse_region_idx])
-        
+        """
 
-        
-
-
-
-
-
+       
 
 
 class GP_Torch_1(gpytorch.models.ExactGP):
