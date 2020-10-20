@@ -1,6 +1,6 @@
 import numpy as np
 from models import *
-#from graphics import *
+from graphics import *
 
 ## Constant for Cost function
 THRESHOLD = 0.5

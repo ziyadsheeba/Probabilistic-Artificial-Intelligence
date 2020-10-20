@@ -78,22 +78,19 @@ class GP_SK_1():
         # DENSE DATA REGION ESTIMATOR
         # Hyperparameter for grid search 
         self.hyper_param_grid = [
-            {'nystroem__kernel': [o*Sum(Matern(length_scale=lm,nu=n), c*WhiteKernel())
-                             for kc in np.logspace(-4,2,20)
-                             for lm in np.logspace(-1, 0.1, 20)
-                             for n in np.logspace(-2, 1.5, 20)
-                             for c in np.logspace(-3,1,10)
-                             for o in np.logspace(-2,1,10)] ,}
+            {'nystroem__kernel': [o*Sum(Matern(length_scale=lm,nu=n), RBF())
+                             for lm in np.logspace(-1, 0.1, 50)
+                             for n in np.logspace(-2, 0.4, 50)
+                             for o in np.logspace(-2,1,20)] ,}
         ]    
         # Kernel approximation for dense data region        
-        self.feature_map = Nystroem(n_components=110)        
+        self.feature_map = Nystroem(n_components=115)        
         #self.estimator = linear_model.BayesianRidge(kernel=self.feature_map, random_state=0, n_restarts_optimizer=10)        
         #Pipeline
         self.pipeline = Pipeline([('nystroem', self.feature_map), ('brr', linear_model.BayesianRidge(compute_score=True))])
-        dense_estimator = RandomizedSearchCV(self.pipeline, self.hyper_param_grid, random_state = 3, cv=5, return_train_score=True, verbose=1, refit=True, n_jobs=2, n_iter=5)
-        
+        dense_estimator = RandomizedSearchCV(self.pipeline, self.hyper_param_grid, random_state = 3, cv=2, return_train_score=True, verbose=2, refit=True, n_jobs=2, n_iter=2)
         # SPARSE DATA REGION ESTIMATOR
-        self.kernel =  1.0 * Matern(length_scale=0.90, nu=4.0) + 0.1*WhiteKernel() 
+        self.kernel =  1.83**2 * Matern(length_scale=1.08, nu=1.43) + 0.1*WhiteKernel() 
         sparse_estimator = GaussianProcessRegressor(kernel=self.kernel)
         
         #self.estimator = GridSearchCV(self.pipeline, self.hyper_param_grid, cv=5, return_train_score=True, verbose=1, refit=True, n_jobs=2)
@@ -106,19 +103,11 @@ class GP_SK_1():
         y_mean = np.zeros((n,))
         y_std = np.zeros((n,))
         
-        sparse_region_idx =tuple([(test_x[:,0] >= -0.4)])
-        dense_region_idx = tuple([(test_x[:,0] < -0.4)])
+        sparse_region_idx =tuple([(test_x[:,0] >= -0.5)])
+        dense_region_idx = tuple([(test_x[:,0] < -0.5)])
 
-        #middle_region_idx =tuple([(test_x[:,0] > -0.4)&(test_x[:,0] <= 0.6)])
-
- 
-
-        
-
-        
+        #middle_region_idx =tuple([(test_x[:,0] > -0.4)&(test_x[:,0] <= 0.6)])     
         #y_mean[dense_region_idx], y_std[dense_region_idx] = self.estimator[0].predict(test_x[dense_region_idx], return_std=True) 
-
-
         #y_mean[sparse_region_idx], y_std[sparse_region_idx] = self.estimator[1].predict(test_x[sparse_region_idx], return_std=True)
 
         y_mean_1 = self.estimator[0].predict(test_x)
@@ -130,42 +119,20 @@ class GP_SK_1():
         #y_mean[middle_region_idx] = *y_mean_2[middle_region_idx] +*y_mean_1[middle_region_idx]
         #y_std[middle_region_idx] =  y_std_1[dense_region_idx]
         y_std[dense_region_idx] = y_std_1[dense_region_idx]
-        y_std[sparse_region_idx] =  y_std_2[sparse_region_idx]
-
-
-  
-        
+        y_std[sparse_region_idx] =  y_std_2[sparse_region_idx]         
 
         print("Avg. Standard Deviation of prediction : \n {}".format(np.mean(y_std)))
 
         
         # Bayesian Decision theory with asymmetric cost, see IML slides
         
-        c1 = 100 #TODO change depend on cost function
-        
+        c1 = 100 #TODO change depending on cost function        
         c2 = 1
         c  = c1/(c1+c2)
         n = test_x.shape[0]
         y = np.zeros((n,))
         for i in range(n) :
-            y[i] = y_mean[i] + y_std[i]*statistics.NormalDist(y_mean[i], y_std[i]).inv_cdf(c)    
-        
-
-
-        # Bayesian decision theory with cost function - doesnt run
-        """
-        y = np.zeros((n,))
-        for k in range(n) :
-            y_range = np.linspace(abs(y_mean[k] - y_std[k]), y_mean[k] + y_std[k], 100)
-            min_cost = math.inf
-            best_idx = 0
-            for i in range(y_range.shape[0]):
-                y_cost = cost_function(y_mean[k],y_range[i])
-                if( y_mean[k]!=y_range[i] & y_cost < min_cost):
-                    min_cost = y_cost
-                    best_idx = i
-            y[k] = y_range[best_idx]
-        """
+            y[i] = y_mean[i] + y_std[i]*statistics.NormalDist(y_mean[i], y_std[i]).inv_cdf(c)        
 
         if(return_std) :
             return y, y_std
@@ -177,38 +144,29 @@ class GP_SK_1():
         print("Starting model fitting...")
         print("Dimensions of training data X : {},  y : {}".format(train_x.shape, train_y.shape))  
 
-        sparse_region_idx =tuple([(train_x[:,0] >=-0.4)])
-        dense_region_idx = tuple([(train_x[:,0] < -0.4)])
-
+        sparse_region_idx  = np.where((train_x[:,0] >=-0.5))[0]
+        dense_region_idx   = np.where((train_x[:,0] < -0.5))[0]
 
         print("Fitting dense region estimator")
-        print("-> Training size : {}".format(train_x[dense_region_idx].shape))
-        self.estimator[0].fit(train_x[dense_region_idx], train_y[dense_region_idx])
-       
+        print("-> Training size : {}".format(train_x[dense_region_idx,:].shape))
+        self.estimator[0].fit(train_x[dense_region_idx,:], train_y[dense_region_idx]) 
+        print("Best model : {}".format(self.estimator[0].best_estimator_))          
 
         print("Fitting sparse region estimator")
-        print("-> Training size : {}".format(train_x[sparse_region_idx].shape))
+        print("-> Training size : {} + 1000 subsamples".format(train_x[sparse_region_idx,:].shape))
+        
+        # Subsample
+        samples_idx = np.random.choice(dense_region_idx, size = (1000, ) , replace = True)
+        self.estimator[1].fit(np.concatenate((train_x[sparse_region_idx,:], train_x[samples_idx,:])),
+                                  np.concatenate((train_y[sparse_region_idx],train_y[samples_idx])))
+
         #print(self.estimator[0].best_estimator_.get_params(['kernel']))
         #self.estimator[1].set_params(['kernel' : self.estimator[0].best_estimator_.get_params(['nystroem__kernel']))
-        self.estimator[1].fit(train_x[sparse_region_idx], train_y[sparse_region_idx])
-        print("Best model : {}".format(self.estimator[0].best_estimator_))
+        #self.estimator[1].fit(train_x[sparse_region_idx], train_y[sparse_region_idx])
         
 
         
 
-        #print(self.grid_search.cv_results_)
-
-        # TODO test if correct
-        #transformed_data = self.feature_map.fit_transform(train_x)
-
-        #self.estimator.fit(transformed_data, train_y)
-        #self.estimator.fit(train_x, train_y)
-        #start_time = time.time()
-        #self.training_score_ = self.estimator.scores_
-        #print("Time for fitting the model: {:3f}".format(time.time() - start_time))
-        #print("Learned kernel: \n {}".format(self.estimator.kernel_))
-        #print("Score for training data : {}".format(self.training_score_))
-        # TODO use crossvalidation on predictive performance max marginal likelihood of the data (sci kit log_marginal_likelihood(theta) )see
 
 
 
@@ -263,14 +221,12 @@ class Wrapper_Model_Torch():
         #train_y_tensor = torch.tensor(train_y, dtype=torch.double)
 
         training_iter = 50  
-
-
         self.likelihood_ = gpytorch.likelihoods.GaussianLikelihood()
         self.model_ = GP_Torch_1(train_x_tensor, train_y_tensor , self.likelihood_)
 
   
 
-        # --------- taken form gpytorch website ----
+        # --------- taken from gpytorch website ----
         # Find optimal model hyperparameters
         self.model_.train()
         self.likelihood_.train()
@@ -280,14 +236,12 @@ class Wrapper_Model_Torch():
 
         # "Loss" for GPs - the marginal log likelihood
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(self.likelihood_, self.model_)
-
         for i in range(training_iter):
             # Zero gradients from previous iteration
             optimizer.zero_grad()
             # Output from model
             output = self.model_(train_x_tensor)
             # Calc loss and backprop gradients
-
             #print(train_y_tensor.dtype)
             loss = -mll(output, train_y_tensor)
             loss.backward()
