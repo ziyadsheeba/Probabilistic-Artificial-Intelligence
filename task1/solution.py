@@ -78,22 +78,6 @@ It uses predictions to compare to the ground truth using the cost_function above
 
 class Model():
 
-    '''
-        The approach used to solve this problem will be the following:
-            
-            1) Subsample the data N_iteration times and get an estimate of the hyperparameters used 
-               using the marginal likelihood method. The average will be weighted by the likelihood
-               function.
-
-            2) Choose the kernel that returns the higher log marginal likelihood on average.
-            
-            3) Using the estimated hyperparameter for the optimal kernel and compute a Nystroem approximation
-               and return a new data matrix
-
-            4) Use the new data matrix to fit a Bayesian Ridge Regression model
-
-    '''
-
     def __init__(self): 
 
         feature_approximator = Nystroem(n_components = 200)
