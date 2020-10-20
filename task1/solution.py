@@ -88,7 +88,7 @@ class Model():
                                          ('BRR', BayesianRidge(compute_score = True)) ])
 
         self.dense_hyper_params_ = [{'nystroem__kernel': [RBF(length_scale=ls)
-                                            for ls in np.logspace(-2, 2, num = 100)]}]  
+                                            for ls in np.logspace(-2, 2, num = 500)]}]  
         
         cv = [(slice(None), slice(None))]
         self.dense_tuner         = GridSearchCV(dense_pipeline,
@@ -101,9 +101,6 @@ class Model():
         self.sparse_estimator = GaussianProcessRegressor(kernel = RBF() +  WhiteKernel())
         self.estimators = None
 
-        # Storing a scaler object for the data matrix
-        self.x_scaler = StandardScaler()
-
         # Storing the mean and the variance of the targets for scaling
         self.y_mean = 0
         self.y_var  = 0
@@ -113,9 +110,7 @@ class Model():
         """
             TODO: enter your code here
         """        
-        # Scale the test data
-        test_x = self.x_scaler.transform(test_x)
-        
+       
         n = test_x.shape[0]
 
         y_pred_mean  = np.zeros([n,2])
@@ -161,9 +156,6 @@ class Model():
         train_y -= self.y_mean
         train_y  = train_y/(self.y_var**0.5)
     
-        # Scale the data matrix for stable training
-        train_x = self.x_scaler.fit_transform(train_x)
-
         # split the data into sparse and dense regions
         sparse_idx = np.where(train_x[:,0]>-0.5)[0]
         dense_idx  = np.where(train_x[:,0]<=-0.5)[0]
