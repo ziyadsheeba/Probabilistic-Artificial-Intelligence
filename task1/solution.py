@@ -27,6 +27,8 @@ W2 = 20
 W3 = 100
 W4 = 0.04
 
+# Setting the numpy seed
+np.random.seed(2)
 
 
 
@@ -80,7 +82,7 @@ class Model():
 
     def __init__(self): 
 
-        feature_approximator = Nystroem(n_components = 200)
+        feature_approximator = Nystroem(n_components = 500, random_state = 2)
         dense_estimator = BayesianRidge()
 
         # Setting up the pipelines
@@ -88,8 +90,9 @@ class Model():
                                          ('BRR', BayesianRidge(compute_score = True)) ])
 
         self.dense_hyper_params_ = [{'nystroem__kernel': [RBF(length_scale=ls)
-                                            for ls in np.logspace(-2, 2, num = 500)]}]  
+                                            for ls in np.logspace(-2, 1, num = 50)]}]  
         
+
         cv = [(slice(None), slice(None))]
         self.dense_tuner         = GridSearchCV(dense_pipeline,
                                             self.dense_hyper_params_,
@@ -97,13 +100,12 @@ class Model():
                                             verbose = 1,
                                             cv = cv,
                                             n_jobs = -1)
-        self.dense_estimator  = None
-        self.sparse_estimator = GaussianProcessRegressor(kernel = RBF() +  WhiteKernel())
-        self.estimators = None
 
-        # Storing the mean and the variance of the targets for scaling
-        self.y_mean = 0
-        self.y_var  = 0
+        self.dense_estimator  = None
+        self.sparse_estimator = GaussianProcessRegressor(kernel = Matern() + RBF() +  WhiteKernel(),
+                                                        n_restarts_optimizer = 4,
+                                                        normalize_y = True)
+        self.estimators = None
     pass
 
     def predict(self, test_x):
@@ -115,31 +117,32 @@ class Model():
 
         y_pred_mean  = np.zeros([n,2])
         y_pred_std   = np.zeros([n,2])
-        y_pred       = np.zeros([n, 2])
-        y_prediction = np.zeros(n)  
+        y_pred       = np.zeros([n, 2]) 
         for i ,estimator in enumerate(self.estimators):
             
             # predict the mean and the variance
-            mean, std        = estimator.predict(test_x, return_std = True)
-            y_pred_mean[:,i] = mean*(self.y_var**0.5) + self.y_mean
-            y_pred_std[:,i]  = std*(self.y_var**0.5)
+            y_pred_mean[:,i], y_pred_std[:,i]  = estimator.predict(test_x, return_std = True)
             
             # adjust the cost based on decision theory
-            cost_factor = 1 - norm.cdf(np.divide(0.5-y_pred_mean[:,i], y_pred_std[:,i]))
+            cost_factor = 1 - norm.cdf(np.divide(THRESHOLD - y_pred_mean[:,i], y_pred_std[:,i]))
             c1 = np.divide(W2 + W3*cost_factor, cost_factor+1)
             c2 = W1*np.ones([n])
             y_pred[:,i] = y_pred_mean[:,i] + np.multiply(y_pred_std[:,i], norm.ppf(np.divide(c1, c1+c2)))
-            
-            y_prediction += np.divide(y_pred[:,i], y_pred_std[:,i])
     
         print("################################ Predictions  ################################")
         print("BRR Prediction: ", y_pred[:,0])
         print("BRR std: ", y_pred_std[:,0])
 
         print("GP Prediction: ",  y_pred[:,1])
-        print("GP std: ", y_pred_std[:,1])
-        y_prediction = np.divide(y_prediction,  y_pred_std[:,0]**-1 + y_pred_std[:,1]**-1)  
-
+        print("GP std: ", y_pred_std[:,1])  
+       
+        
+        # Prediction based on the domain
+        sparse_domain = test_x[:,0] > -0.5
+        y_prediction   = y_pred[:,0]*np.invert(sparse_domain) + \
+                        y_pred[:,1]*sparse_domain
+        
+        print("Final Prediction: ", y_prediction)
         return y_prediction
 
     def fit_model(self, train_x, train_y):
@@ -147,15 +150,8 @@ class Model():
              TODO: enter your code here
         """
         print()
-        print("################################ Grid Search ################################")
-        
-        # Scale the targets to match the GP prior 
-        self.y_mean = np.mean(train_y)
-        self.y_var  = np.var(train_y)
-        
-        train_y -= self.y_mean
-        train_y  = train_y/(self.y_var**0.5)
-    
+        print("################################ Fitting Models  ################################")
+           
         # split the data into sparse and dense regions
         sparse_idx = np.where(train_x[:,0]>-0.5)[0]
         dense_idx  = np.where(train_x[:,0]<=-0.5)[0]
@@ -163,16 +159,14 @@ class Model():
         train_x_sparse = train_x[sparse_idx,:]
         train_y_sparse = train_y[sparse_idx]
          
-        # Tune the hyperparameters using grid search and extract the best estimator (dense domain)
+        #Tune the hyperparameters using grid search and extract the best estimator (dense domain)
         self.dense_tuner.fit(train_x, train_y)
         self.dense_estimator = self.dense_tuner.best_estimator_
-        
+    
         # subsample the dense domain for the GP model
-        samples_idx = np.random.choice(dense_idx, size = (1000, ) , replace = True)
+        samples_idx = np.random.choice(dense_idx, size = (1500, ) , replace = True, )
         self.sparse_estimator.fit(np.concatenate((train_x_sparse, train_x[samples_idx,:])),
                                   np.concatenate((train_y_sparse,train_y[samples_idx])))
-
-
         
         self.estimators = [self.dense_estimator, self.sparse_estimator]
 
