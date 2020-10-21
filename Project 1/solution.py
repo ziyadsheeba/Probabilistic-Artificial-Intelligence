@@ -13,7 +13,11 @@ from sklearn.svm import SVR
 from sklearn.kernel_approximation import Nystroem
 from sklearn.model_selection import GridSearchCV
 from sklearn.pipeline import Pipeline
-
+import scipy.integrate as integrate
+import scipy.special as special
+import scipy.integrate as integrate
+from scipy.optimize import minimize
+from scipy.stats import norm
 
 ## Constant for Cost function
 THRESHOLD = 0.5
@@ -54,6 +58,18 @@ def cost_function(true, predicted):
     if reward is None:
         reward = 0
     return np.mean(cost) - np.mean(reward)
+
+def optimal_action(y, std):
+    expected = lambda a : expected_cost(a, y, std) 
+    #Optimize
+    x0 = np.array([y])
+    res = minimize(expected, x0, tol = 1e-4)
+    return res.x
+
+def expected_cost(a, y, std):
+    integ = lambda yi: norm.pdf(yi, loc = y, scale = std) * cost_function(yi, a)
+    res, err = integrate.quad(integ, 0 , 1, epsabs=1.49e-04, epsrel = 1.49e-04)
+    return res
 
 """
 Fill in the methods of the Model. Please do not change the given methods for the checker script to work.
@@ -97,10 +113,16 @@ class Model(BaseEstimator,RegressorMixin):
         ##################################
         # Predict with full GP
         y_0, y_std_0 = self.model[0].predict(test_x, return_std = True)
-        y_0 = y_0 + 1.3*y_std_0
+        # y_0 = y_0 + 1.3*y_std_0
+        for elem in range(len(y_0)):
+            y_0[elem] = optimal_action(y_0[elem], y_std_0[elem])
+            print(elem/len(y_0))
         # Predict with approximate GP
         y_1, y_std_1 = self.model[1].predict(test_x, return_std = True)
-        y_1 = y_1 + 1.3*y_std_1
+        # y_1 = y_1 + 1.3*y_std_1
+        for elem in range(len(y_1)):
+            y_1[elem] = optimal_action(y_1[elem], y_std_1[elem])
+            print(elem/len(y_1))
         #Choose predictions based on domain
         sparse_domain = test_x[:,0] > -0.5
         y = sparse_domain*y_0 + np.invert(sparse_domain)*y_1
@@ -162,12 +184,13 @@ def main():
     test_x_name = "test_x.csv"
     test_x = np.loadtxt(test_x_name, delimiter=',')
     
-    X_train, X_test, y_train, y_test = train_test_split( train_x, train_y, test_size=0.1, random_state=1)
+    X_train, X_test, y_train, y_test = train_test_split( train_x, train_y, test_size=0.006, random_state=1)
     
     M = Model()
     M.fit_model(X_train, y_train)
     
-    M.plot_Gauss(train_x, train_y, test_x)    
+    #M.plot_Gauss(train_x, train_y, test_x)  
+    #M.predict(test_x)
     print(cost_function(y_test, M.predict(X_test)))
 
 if __name__ == "__main__":
