@@ -118,8 +118,8 @@ class BayesianLayer(torch.nn.Module):
         self.prior_mu = 0 
         self.prior_sigma = 0.1 #log std_dev of prior
         #why log(!) sigma ??? 
-        self.weight_mu = nn.Parameter(data=0.1*torch.rand(output_dim), requires_grad=True)
-        self.weight_logsigma = nn.Parameter(data=math.log(0.075)*torch.ones(output_dim), requires_grad=True)
+        self.weight_mu = nn.Parameter(data=0.1*torch.rand(output_dim, input_dim), requires_grad=True)
+        self.weight_logsigma = nn.Parameter(data=math.log(0.075)*torch.ones(output_dim, input_dim), requires_grad=True)
 
         if self.use_bias:
             self.bias_mu = nn.Parameter(torch.zeros(output_dim))
@@ -141,6 +141,7 @@ class BayesianLayer(torch.nn.Module):
             bias = None
        
         out = F.Linear(inputs, w_drawn, bias)
+        #or return also probability distribtion of posterior
         return out
 
 
@@ -199,16 +200,16 @@ class BayesNet(torch.nn.Module):
 
         # TODO: make n random forward passes
         m = nn.Softmax(dim=1) #TODO check if dimension correct
-
+        probs = torch.zeros_like(m(forward(x))) # TODO change to right dimension without computing one forward
         for _ in range(num_forward_passes) :
-            value = forward(x)
+            probs = probs + m(forward(x))
         #TODO incorporate all forward passes
-        probab = m(value)
+        probs = probs*(1/num_forward_passes)
         # compute the categorical softmax probabilities
         # marginalize the probabilities over the n forward passes
 
         #TODO modify so that marginalize over
-        probs = probab
+        
 
         assert probs.shape == (batch_size, 10)
         return probs
