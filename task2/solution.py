@@ -115,12 +115,13 @@ class BayesianLayer(torch.nn.Module):
         # TODO: enter your code here
         # Initialize like Graves, 2011
         # Where to update those ?
-        self.prior_mu = 0 
-        self.prior_sigma = 0.1 #log std_dev of prior
+        self.prior_mu = torch.Tensor([0]) 
+        self.prior_sigma = torch.Tensor([0.1]) #log std_dev of prior
         #why log(!) sigma ??? 
-        self.weight_mu = nn.Parameter(data=0.1*torch.rand(output_dim, input_dim), requires_grad=True)
-        self.weight_logsigma = nn.Parameter(data=math.log(0.075)*torch.ones(output_dim, input_dim), requires_grad=True)
+        self.weight_mu = nn.Parameter(data=0.1*torch.rand(output_dim, input_dim))
+        self.weight_logsigma = nn.Parameter(data=math.log(0.075)*torch.ones(output_dim, input_dim))
 
+        
         if self.use_bias:
             self.bias_mu = nn.Parameter(torch.zeros(output_dim))
             self.bias_logsigma = nn.Parameter(torch.zeros(output_dim))
@@ -136,11 +137,11 @@ class BayesianLayer(torch.nn.Module):
         w_drawn = self.weight_mu + torch.exp(self.weight_logsigma)*torch.randn_like(self.weight_mu)
                 
         if self.use_bias:
-            bias_value = self.bias_mu +  torch.exp(self.bias_logsigma)*torch.randn_like(self.bias_mu)
+            bias = self.bias_mu +  torch.exp(self.bias_logsigma)*torch.randn_like(self.bias_mu)
         else:
             bias = None
        
-        out = F.Linear(inputs, w_drawn, bias)
+        out = F.linear(inputs, w_drawn, bias)
         #or return also probability distribtion of posterior
         return out
 
@@ -162,14 +163,16 @@ class BayesianLayer(torch.nn.Module):
         '''
 
         # TODO: enter your code here
-
+        # TODO check
         kl = 0
-        for i in range(output_dim) :
-            # Formula 13 in Graves for complexity loss when have gaussian posterior and prior
-            loss = torch.log(self.prior_sigma) - self.weight_logsigma[i]  \
-                + 1/(2*torch.exp(2*self.weight_logsigma[i]))*((self.weight_mu[i] - self.prior_mu)**2 + torch.exp(2*self.weight_logsigma) - self.prior_sigma**2)
-
-            kl = kl + loss
+        #for i in range(self.output_dim) : #TODO iteration is wrong
+        # Formula 13 in Graves for complexity loss when have gaussian posterior and prior
+        loss = torch.log(self.prior_sigma) - self.weight_logsigma  \
+                + 1/(2*torch.exp(2*self.weight_logsigma))*((self.weight_mu - self.prior_mu)**2 + torch.exp(2*self.weight_logsigma) - self.prior_sigma**2)
+        #print(loss)
+        kl = loss.sum().sum()
+        #print(kl)
+        #kl = kl + loss
 
         return kl
 
@@ -200,9 +203,9 @@ class BayesNet(torch.nn.Module):
 
         # TODO: make n random forward passes
         m = nn.Softmax(dim=1) #TODO check if dimension correct
-        probs = torch.zeros_like(m(forward(x))) # TODO change to right dimension without computing one forward
+        probs = torch.zeros_like(m(self.forward(x))) # TODO change to right dimension without computing one forward
         for _ in range(num_forward_passes) :
-            probs = probs + m(forward(x))
+            probs = probs + m(self.forward(x))
         #TODO incorporate all forward passes
         probs = probs*(1/num_forward_passes)
         # compute the categorical softmax probabilities
@@ -221,11 +224,11 @@ class BayesNet(torch.nn.Module):
         '''
         loss = 0
         for layer in self.modules() :
-            try : # TODO replace by better method
-                loss =  loss + layer.kl_divergence()
-            except :
-                print("not a bayesian layer")
-
+            if isinstance(layer, BayesianLayer) :
+                #print(type(layer))
+                loss = loss + layer.kl_divergence()
+        #print("size of total kl "  + str(loss.size()))
+        #print("loss value " +  str(loss))
         return loss
        
 
@@ -246,10 +249,13 @@ def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_in
             model.zero_grad()
             y_pred = model(batch_x)
             loss = criterion(y_pred, batch_y)
+            #print("error loss :" + str(loss))
+            #print("batch size dim : " + str(batch_y.size()[0]))
             if type(model) == BayesNet:
                 # BayesNet implies additional KL-loss.
                 # TODO: enter your code here
-                loss = loss + 1/batch_x * model.kl_loss()
+                loss = loss + 1/batch_y.size()[0] * model.kl_loss()
+            #print("losss " + str(loss))
             loss.backward()
             optimizer.step()
 
@@ -350,7 +356,7 @@ def evaluate_model(model, model_type, test_loader, batch_size, extended_eval, pr
 
 
 def main(test_loader=None, private_test=False):
-    num_epochs = 100 # You might want to adjust this
+    num_epochs = 20 # You might want to adjust this
     batch_size = 128  # Try playing around with this
     print_interval = 100
     learning_rate = 5e-4  # Try playing around with this
