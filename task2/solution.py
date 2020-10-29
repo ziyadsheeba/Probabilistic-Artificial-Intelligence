@@ -6,7 +6,7 @@ from sklearn.metrics import average_precision_score, roc_auc_score
 from torch import nn
 from torch.nn import functional as F
 from tqdm import trange, tqdm
-
+import math
 
 def ece(probs, labels, n_bins=30):
     '''
@@ -113,10 +113,13 @@ class BayesianLayer(torch.nn.Module):
         self.use_bias = bias
 
         # TODO: enter your code here
-        #self.prior_mu = ?
-        #self.prior_sigma = ?
-        #self.weight_mu = nn.?
-        #self.weight_logsigma = ?
+        # Initialize like Graves, 2011
+        # Where to update those ?
+        self.prior_mu = 0 
+        self.prior_sigma = 0.1 #log std_dev of prior
+        #why log(!) sigma ??? 
+        self.weight_mu = nn.Parameter(data=0.1*torch.rand(output_dim), requires_grad=True)
+        self.weight_logsigma = nn.Parameter(data=math.log(0.075)*torch.ones(output_dim), requires_grad=True)
 
         if self.use_bias:
             self.bias_mu = nn.Parameter(torch.zeros(output_dim))
@@ -127,15 +130,18 @@ class BayesianLayer(torch.nn.Module):
 
 
     def forward(self, inputs):
-        # TODO: enter your code here
-
+        # draw random weights
+        #number_of_draws = 5
+        #for in range(number_of_draws):
+        w_drawn = self.weight_mu + torch.exp(self.weight_logsigma)*torch.randn_like(self.weight_mu)
+                
         if self.use_bias:
-            # TODO: enter your code here
+            bias_value = self.bias_mu +  torch.exp(self.bias_logsigma)*torch.randn_like(self.bias_mu)
         else:
             bias = None
-
-        # TODO: enter your code here
-        # return ?
+       
+        out = F.Linear(inputs, w_drawn, bias)
+        return out
 
 
     def kl_divergence(self):
@@ -155,6 +161,14 @@ class BayesianLayer(torch.nn.Module):
         '''
 
         # TODO: enter your code here
+
+        kl = 0
+        for i in range(output_dim) :
+            # Formula 13 in Graves for complexity loss when have gaussian posterior and prior
+            loss = torch.log(self.prior_sigma) - self.weight_logsigma[i]  \
+                + 1/(2*torch.exp(2*self.weight_logsigma[i]))*((self.weight_mu[i] - self.prior_mu)**2 + torch.exp(2*self.weight_logsigma) - self.prior_sigma**2)
+
+            kl = kl + loss
 
         return kl
 
@@ -184,8 +198,17 @@ class BayesNet(torch.nn.Module):
         batch_size = x.shape[0]
 
         # TODO: make n random forward passes
+        m = nn.Softmax(dim=1) #TODO check if dimension correct
+
+        for _ in range(num_forward_passes) :
+            value = forward(x)
+        #TODO incorporate all forward passes
+        probab = m(value)
         # compute the categorical softmax probabilities
         # marginalize the probabilities over the n forward passes
+
+        #TODO modify so that marginalize over
+        probs = probab
 
         assert probs.shape == (batch_size, 10)
         return probs
@@ -195,7 +218,15 @@ class BayesNet(torch.nn.Module):
         '''
         Computes the KL divergence loss for all layers.
         '''
-        # TODO: enter your code here
+        loss = 0
+        for layer in self.modules() :
+            try : # TODO replace by better method
+                loss =  loss + layer.kl_divergence()
+            except :
+                print("not a bayesian layer")
+
+        return loss
+       
 
 
 def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_interval=100):
@@ -217,6 +248,7 @@ def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_in
             if type(model) == BayesNet:
                 # BayesNet implies additional KL-loss.
                 # TODO: enter your code here
+                loss = loss + 1/batch_x * model.kl_loss()
             loss.backward()
             optimizer.step()
 
@@ -322,6 +354,7 @@ def main(test_loader=None, private_test=False):
     print_interval = 100
     learning_rate = 5e-4  # Try playing around with this
     model_type = "bayesnet"  # Try changing this to "densenet" as a comparison
+    #model_type = "densenet"
     extended_evaluation = False  # Set this to True for additional model evaluation
 
     dataset_train = load_rotated_mnist()
