@@ -8,6 +8,9 @@ from torch.nn import functional as F
 from tqdm import trange, tqdm
 import math
 
+# Extras
+from torch.autograd import Variable
+
 def ece(probs, labels, n_bins=30):
     '''
     probs has shape [n_examples, n_classes], labels has shape [n_class] -> np.float
@@ -114,17 +117,19 @@ class BayesianLayer(torch.nn.Module):
 
         # TODO: enter your code here
         # Initialize like Graves, 2011
-        # Where to update those ?
-        self.prior_mu = torch.Tensor([0]) 
-        self.prior_sigma = torch.Tensor([0.1]) #log std_dev of prior
-        #why log(!) sigma ??? 
-        self.weight_mu = nn.Parameter(data=0.1*torch.rand(output_dim, input_dim))
-        self.weight_logsigma = nn.Parameter(data=math.log(0.075)*torch.ones(output_dim, input_dim))
+        # only learn mu
+        self.prior_mu = nn.Parameter(torch.Tensor([0]))
+        #self.prior_mu = torch.Tensor([0]) 
+        self.prior_sigma = torch.Tensor([1]) 
 
+        # Initialize weights
+        self.weight_mu = nn.Parameter(0.1*torch.rand(output_dim, input_dim))
+        self.weight_logsigma = nn.Parameter(math.log(0.075)*torch.ones(output_dim, input_dim))
+        #self.weight_logsigma = torch.tensor(data=math.log(0.075)*torch.ones(output_dim, input_dim))
         
         if self.use_bias:
             self.bias_mu = nn.Parameter(torch.zeros(output_dim))
-            self.bias_logsigma = nn.Parameter(torch.zeros(output_dim))
+            self.bias_logsigma = nn.Parameter(torch.ones(output_dim))
         else:
             self.register_parameter('bias_mu', None)
             self.register_parameter('bias_logsigma', None)
@@ -132,14 +137,13 @@ class BayesianLayer(torch.nn.Module):
 
     def forward(self, inputs):
         # draw random weights
-        #number_of_draws = 5
-        #for in range(number_of_draws):
         w_drawn = self.weight_mu + torch.exp(self.weight_logsigma)*torch.randn_like(self.weight_mu)
                 
         if self.use_bias:
             bias = self.bias_mu +  torch.exp(self.bias_logsigma)*torch.randn_like(self.bias_mu)
         else:
             bias = None
+
        
         out = F.linear(inputs, w_drawn, bias)
         #or return also probability distribtion of posterior
@@ -165,15 +169,14 @@ class BayesianLayer(torch.nn.Module):
         # TODO: enter your code here
         # TODO check
         kl = 0
-        #for i in range(self.output_dim) : #TODO iteration is wrong
+
         # Formula 13 in Graves for complexity loss when have gaussian posterior and prior
         loss = torch.log(self.prior_sigma) - self.weight_logsigma  \
-                + 1/(2*torch.exp(2*self.weight_logsigma))*((self.weight_mu - self.prior_mu)**2 + torch.exp(2*self.weight_logsigma) - self.prior_sigma**2)
+                + 1/(2*torch.exp(2*self.prior_sigma))*((self.weight_mu - self.prior_mu)**2 + torch.exp(2*self.weight_logsigma) - self.prior_sigma**2)
         #print(loss)
-        kl = loss.sum().sum()
+        kl = loss.sum()
         #print(kl)
         #kl = kl + loss
-
         return kl
 
 
@@ -203,11 +206,11 @@ class BayesNet(torch.nn.Module):
 
         # TODO: make n random forward passes
         m = nn.Softmax(dim=1) #TODO check if dimension correct
-        probs = torch.zeros_like(m(self.forward(x))) # TODO change to right dimension without computing one forward
+        probs = torch.zeros(batch_size, 10) 
         for _ in range(num_forward_passes) :
             probs = probs + m(self.forward(x))
-        #TODO incorporate all forward passes
         probs = probs*(1/num_forward_passes)
+
         # compute the categorical softmax probabilities
         # marginalize the probabilities over the n forward passes
 
@@ -222,7 +225,7 @@ class BayesNet(torch.nn.Module):
         '''
         Computes the KL divergence loss for all layers.
         '''
-        loss = 0
+        loss = torch.zeros(1)
         for layer in self.modules() :
             if isinstance(layer, BayesianLayer) :
                 #print(type(layer))
@@ -252,16 +255,25 @@ def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_in
             #print("error loss :" + str(loss))
             #print("batch size dim : " + str(batch_y.size()[0]))
             if type(model) == BayesNet:
+                pass
                 # BayesNet implies additional KL-loss.
                 # TODO: enter your code here
-                loss = loss + 1/batch_y.size()[0] * model.kl_loss()
+                loss = loss + 0.1*1/batch_y.size()[0] * model.kl_loss()
             #print("losss " + str(loss))
             loss.backward()
+
+            #DEBUG
+            for param in  model.parameters():
+                #print(param.grad.data.sum())
+                pass
+            #--------------------
             optimizer.step()
 
             if k % pbar_update_interval == 0:
                 acc = (model(batch_x).argmax(axis=1) == batch_y).sum().float()/(len(batch_y))
                 pbar.set_postfix(loss=loss.item(), acc=acc.item())
+    
+    #print(model.parameters)
 
 
 def evaluate_model(model, model_type, test_loader, batch_size, extended_eval, private_test):
@@ -356,8 +368,8 @@ def evaluate_model(model, model_type, test_loader, batch_size, extended_eval, pr
 
 
 def main(test_loader=None, private_test=False):
-    num_epochs = 20 # You might want to adjust this
-    batch_size = 128  # Try playing around with this
+    num_epochs = 50 # You might want to adjust this
+    batch_size = 2000  # Try playing around with this, initial 128
     print_interval = 100
     learning_rate = 5e-4  # Try playing around with this
     model_type = "bayesnet"  # Try changing this to "densenet" as a comparison
