@@ -177,8 +177,8 @@ class BayesianLayer(torch.nn.Module):
         kl = 0
 
         # Formula 13 in Graves for complexity loss when have gaussian posterior and prior
-        loss = torch.log(self.prior_sigma) - self.weight_logsigma  \
-               + 1/(2*(self.prior_sigma)**2)*((self.weight_mu - self.prior_mu)**2 + torch.exp(2*self.weight_logsigma) - self.prior_sigma**2)
+        loss = torch.log(self.prior_sigma) - logsigma  \
+               + 1/(2*(self.prior_sigma)**2)*((mu - self.prior_mu)**2 + torch.exp(2*logsigma) - self.prior_sigma**2)
        
         #print(loss)
         kl = loss.sum()
@@ -266,7 +266,7 @@ def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_in
                 # BayesNet implies additional KL-loss.
                 # TODO: enter your code here
                 kl_loss = model.kl_loss()
-                loss = loss + 1/batch_y.size()[0] * kl_loss
+                loss = loss + 0.1*1/batch_y.size()[0] * kl_loss
 
             #print("losss " + str(loss))
             loss.backward()
