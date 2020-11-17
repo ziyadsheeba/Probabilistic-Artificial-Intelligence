@@ -4,7 +4,7 @@ from scipy.stats import norm
 import matplotlib.pyplot as plt
 
 # GP-related imports
-from sklearn.gaussian_process.kernels import DotProduct, WhiteKernel, RBF, ExpSineSquared, RationalQuadratic, Matern
+from sklearn.gaussian_process.kernels import DotProduct, WhiteKernel, RBF, ExpSineSquared, RationalQuadratic, Matern, ConstantKernel
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.base import RegressorMixin
 from sklearn.base import BaseEstimator
@@ -22,29 +22,30 @@ class BO_algo(BaseEstimator,RegressorMixin):
         # TODO: enter your code here
         #####################
         # Objective GP
-        kernel_f = Matern(length_scale=0.5, length_scale_bounds="fixed", nu=2.5) + \
+        kernel_f = 0.5*Matern(length_scale=0.5, length_scale_bounds="fixed", nu=2.5) + \
                 WhiteKernel(noise_level=np.power(0.15,2), noise_level_bounds="fixed")
 
         GP_f = GaussianProcessRegressor(kernel=kernel_f,
                                         n_restarts_optimizer = 1, 
-                                        normalize_y=True,
+                                        normalize_y=False,
                                         random_state=1)
 
         ####################
         # Speed GP
         # TODO: prescribe the 1.5 mean somehow.
-        kernel_v = Matern(length_scale=0.5, length_scale_bounds="fixed", nu=2.5) + \
-                WhiteKernel(noise_level=np.power(0.15,2), noise_level_bounds="fixed")
+        kernel_v = np.sqrt(2)*Matern(length_scale=0.5, length_scale_bounds="fixed", nu=2.5) + \
+                WhiteKernel(noise_level=np.power(0.15,2), noise_level_bounds="fixed") + \
+                ConstantKernel(constant_value=1.5, constant_value_bounds="fixed")
 
         GP_v = GaussianProcessRegressor(kernel=kernel_v,
                                         n_restarts_optimizer = 1, 
-                                        normalize_y=False,
+                                        normalize_y=True,
                                         random_state=1)
         self.model = [GP_f, GP_v]
 
         ####################
         # Training data placeholder
-        self.train_data = np.empty((0,domain.shape[0]+2) dtype="object")
+        self.train_data = np.empty((0,domain.shape[0]+2), dtype=np.float64)
 
         # Constraint lower bound
         self.v_min = 1.2
@@ -63,7 +64,7 @@ class BO_algo(BaseEstimator,RegressorMixin):
 
         # TODO: enter your code here
         # In implementing this function, you may use optimize_acquisition_function() defined below.
-        return self.optimize_acquisition_function()[None, 0,:]
+        return self.optimize_acquisition_function()[None, 0, :]
 
 
     def optimize_acquisition_function(self):
@@ -207,8 +208,6 @@ def f(x):
     """Dummy objective"""
     #mid_point = domain[:, 0] + 0.5 * (domain[:, 1] - domain[:, 0])
     #return - np.linalg.norm(x - mid_point, 2) + np.random.normal(loc=0.0, scale=0.15) # -(x - 2.5)^2
-    a_4, a_3, a_2, a_1, a_0, of = -0.3, 0.7, 1.2, -1.4, 0.3, -3.7
-    # -3.7, 0.3, -1.4, -1.2, 0.7, -0.3
     coef = np.array([-0.3, 0.7, 1.2, -1.4, 0.3])
     return float(np.polyval(coef, (-1.2*x+3.7)))
 
@@ -216,6 +215,7 @@ def v(x):
     """Dummy speed"""
     #return 2.0
     #return float( np.max( np.array([0, (x-2)*1.2]) ) ) + np.random.normal(loc=0.0, scale=0.07)
+    x = np.squeeze(x)
     return float( 1.2+0.5*np.sin(5*x) + np.random.normal(loc=0.0, scale=0.07) )
 
 
@@ -224,7 +224,7 @@ def main():
     agent = BO_algo()
 
     # Loop until budget is exhausted
-    for j in range(100):
+    for j in range(50):
         # Get next recommendation
         x = agent.next_recommendation()
 
