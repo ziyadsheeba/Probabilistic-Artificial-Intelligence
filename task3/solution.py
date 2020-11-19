@@ -17,41 +17,39 @@ class BO_algo():
         """Initializes the algorithm with a parameter configuration. """
 
         self.speed_min = 1.2
+        self.logspeed_min = math.log(self.speed_min)
 
         #define noise parameters
-        #TODO where to use this information
-        self.std_f = 0.15
-        self.std_v = 0.0001
+        self.var_f = 0.15**2
+        self.var_v = 0.0001**2
 
         #initialize GPs
         kernel_var_f = 0.5
         kernel_var_v = math.sqrt(2)
 
-        self.kernel_f = Matern(length_scale=0.5, nu=2.5) 
-        self.kernel_v = Matern(length_scale=0.5, nu=2.5) # + ConstantKernel(constant_value=1.5, constant_value_bounds="fixed")
+        self.kernel_f = Matern(length_scale=0.5,length_scale_bounds="fixed", nu=2.5) #+ WhiteKernel(noise_level=self.var_f, noise_level_bounds="fixed") 
+        self.kernel_v = Matern(length_scale=0.5,length_scale_bounds="fixed", nu=2.5) #+ WhiteKernel(noise_level=self.std_v) # + ConstantKernel(constant_value=1.5, constant_value_bounds="fixed")
         
         self.prior_mean_v  = 1.5 
 
-        self.gp_f = GaussianProcessRegressor(kernel=self.kernel_f, alpha=kernel_var_f, n_restarts_optimizer=5) #can also change alpha
-        self.gp_v = GaussianProcessRegressor(kernel=self.kernel_v, alpha=kernel_var_v, n_restarts_optimizer=5)
+        self.gp_f = GaussianProcessRegressor(kernel=self.kernel_f, alpha=kernel_var_f, n_restarts_optimizer=1) 
+        self.gp_v = GaussianProcessRegressor(kernel=self.kernel_v, alpha=kernel_var_v, n_restarts_optimizer=1) #, normalize_y=True)
 
-        #self.gp_f = GaussianProcessRegressor(kernel=self.kernel_f, n_restarts_optimizer=10)
-        #self.gp_v = GaussianProcessRegressor(kernel=self.kernel_v, n_restarts_optimizer=10)
+        # initialize  UCB Aquisition function parameters
+        #self.sqrt_beta_f = math.sqrt(2*math.log(5*(self.t**2)*math.pi**2/(6))/5)
+        #self.sqrt_beta_v = math.sqrt(2*math.log(5*(self.t**2)*math.pi**2/(6))/5)
 
-
-
-        #initialize Aquisition function parameters, TODO optimize
-        #self.sqrt_beta_f = 0.5*(1 + self.std_f) 
-        #self.sqrt_beta_v = (1 + self.std_v)
+        #define iteration parameter
         self.t = 1
-        self.sqrt_beta_f = math.sqrt(2*math.log(5*(self.t**2)*math.pi**2/(6))/5)
-        self.sqrt_beta_v = math.sqrt(2*math.log(5*(self.t**2)*math.pi**2/(6))/5)
-
 
         #define data array, initialize with 0 
         self.theta =  np.array([])
         self.y_f = np.array([])
-        self.y_v = np.array([])           
+        self.y_v = np.array([]) 
+
+        #store best f, v values (needed for expected improvement) 
+        self.best_f = -10000
+        self.best_v = 1.5         
         
 
     def next_recommendation(self):
@@ -120,24 +118,35 @@ class BO_algo():
         af_value: float
             Value of the acquisition function at x
         """
-        #self.sqrt_beta_f = math.sqrt(2*math.log(5*(self.t**2)*(math.pi**2)/6)/5)
-        #self.sqrt_beta_v = math.sqrt(2*math.log(5*(self.t**2)*(math.pi**2)/6)/5)     
-        self.sqrt_beta_f = 1.0
-        self.sqrt_beta_v = 1.0
-
+        # Compute marginal likelihood of  GP
         x_np = np.reshape(x, (-1,1))
         mu_f, sigma_f = self.gp_f.predict(x_np, return_std=True)
-        mu_v, sigma_v = self.gp_v.predict(x_np, return_std=True)
+        mu_v, sigma_v = self.gp_v.predict(x_np, return_std=True)            
 
-        constraint = 1 - NormalDist(mu=mu_v, sigma=sigma_v).cdf(self.speed_min - self.prior_mean_v) 
-        #constraint = NormalDist(mu=mu_v, sigma=sigma_v).cdf(0) - NormalDist(mu=mu_v, sigma=sigma_v).cdf(self.speed_min - self.prior_mean_v)
-        
-        #if (constraint<1e-1) :
-        #    print(constraint)
-        #   af_value = constraint
-        #else :
-        af_value = (mu_f + self.sqrt_beta_f*sigma_f) + constraint*(mu_v+ self.prior_mean_v + self.sqrt_beta_v*sigma_v)
-        #af_value = (mu_f + self.sqrt_beta_f*sigma_f)*(mu_v + self.prior_mean_v - self.sqrt_beta_v*sigma_v)
+        #Compute probabilistic constraint 
+        constraint = 1 - NormalDist(mu=mu_v, sigma=sigma_v).cdf(self.speed_min - self.prior_mean_v)#*(1+self.var_v)
+
+        # UCB Aquisition function - TODO try again with the constraint violation limit
+        #self.sqrt_beta_f = math.sqrt(2*math.log(5*(self.t**2)*(math.pi**2)/6)/5)
+        #self.sqrt_beta_v = math.sqrt(2*math.log(5*(self.t**2)*(math.pi**2)/6)/5)     
+        #self.sqrt_beta_f = 1.0
+        #self.sqrt_beta_v = 1.0  
+        #af_value = (mu_f + self.sqrt_beta_f*sigma_f)*constraint   
+
+        #Expected Improvement Aquisition function
+        xi = 0.01 # hyperparameter for exploration (the larger the more explore, less exploit)
+        Z_f = (mu_f - self.best_f - xi)/(sigma_f)
+        Z_v = (mu_v - self.best_v - xi)/(sigma_v)        
+
+        # According to Gelbart et al, 2014 if constraint is violated,  we only need to optimize constraint distribution
+        # Violation of the constraint occurs, when the probability that v is below v_min is smaller than
+        # a predefined threshold hyperparameter
+        if(constraint > 0.6 and sigma_f!=0):
+            ei_f = (mu_f - self.best_f - xi)*NormalDist().cdf(Z_f) + sigma_f*NormalDist().pdf(Z_f)
+            ei_v = (mu_v - self.best_v - xi)*NormalDist().cdf(Z_v) + sigma_v*NormalDist().pdf(Z_v)
+            af_value = constraint*ei_f
+        else :
+            af_value = np.asarray([constraint])
  
         return af_value       
 
@@ -163,9 +172,13 @@ class BO_algo():
         self.y_f = np.append(self.y_f,f)
         self.y_v = np.append(self.y_v, v)
 
-        self.gp_f.fit(self.theta, self.y_f)
-        self.gp_v.fit(self.theta, self.y_v - self.prior_mean_v) 
-        #self.gp_v.fit(self.theta, self.y_v) 
+        #if(self.theta.shape[0]>1):
+        self.gp_v.fit(self.theta, self.y_v - self.prior_mean_v)
+        self.gp_f.fit(self.theta, self.y_f)              
+
+        # Compute best value so far seen
+        self.best_f = self.y_f.max()
+        self.best_v = self.y_v.max()
 
         #print(self.theta)
         #print(self.y_f)
@@ -181,18 +194,13 @@ class BO_algo():
         solution: np.ndarray
             1 x domain.shape[0] array containing the optimal solution of the problem
         """
-                
+         # Select x s.t. speed constraint not violated
         lim_sel = self.y_v > self.speed_min
+       
         if(np.count_nonzero(lim_sel)>0):
             idx_sel = self.y_f[lim_sel].argmax()
             theta_temp = self.theta[lim_sel]
-            #print(lim_sel)
-            #print(idx_sel)
-            #print(self.t)
             x_opt = theta_temp[idx_sel]
-
-            y_v_temp = self.y_v[lim_sel]
-            print(y_v_temp[idx_sel])
         else :
             self.gp_f.fit(self.theta, self.y_f)
             self.gp_v.fit(self.theta, self.y_v - self.prior_mean_v)
