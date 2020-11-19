@@ -3,6 +3,11 @@ from scipy.optimize import fmin_l_bfgs_b
 
 domain = np.array([[0, 5]])
 
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import Matern, WhiteKernel, ConstantKernel
+import math
+import random
+from statistics import NormalDist
 
 """ Solution """
 
@@ -11,9 +16,43 @@ class BO_algo():
     def __init__(self):
         """Initializes the algorithm with a parameter configuration. """
 
-        # TODO: enter your code here
-        pass
+        self.speed_min = 1.2
 
+        #define noise parameters
+        #TODO where to use this information
+        self.std_f = 0.15
+        self.std_v = 0.0001
+
+        #initialize GPs
+        kernel_var_f = 0.5
+        kernel_var_v = math.sqrt(2)
+
+        self.kernel_f = Matern(length_scale=0.5, nu=2.5) 
+        self.kernel_v = Matern(length_scale=0.5, nu=2.5) # + ConstantKernel(constant_value=1.5, constant_value_bounds="fixed")
+        
+        self.prior_mean_v  = 1.5 
+
+        self.gp_f = GaussianProcessRegressor(kernel=self.kernel_f, alpha=kernel_var_f, n_restarts_optimizer=5) #can also change alpha
+        self.gp_v = GaussianProcessRegressor(kernel=self.kernel_v, alpha=kernel_var_v, n_restarts_optimizer=5)
+
+        #self.gp_f = GaussianProcessRegressor(kernel=self.kernel_f, n_restarts_optimizer=10)
+        #self.gp_v = GaussianProcessRegressor(kernel=self.kernel_v, n_restarts_optimizer=10)
+
+
+
+        #initialize Aquisition function parameters, TODO optimize
+        #self.sqrt_beta_f = 0.5*(1 + self.std_f) 
+        #self.sqrt_beta_v = (1 + self.std_v)
+        self.t = 1
+        self.sqrt_beta_f = math.sqrt(2*math.log(5*(self.t**2)*math.pi**2/(6))/5)
+        self.sqrt_beta_v = math.sqrt(2*math.log(5*(self.t**2)*math.pi**2/(6))/5)
+
+
+        #define data array, initialize with 0 
+        self.theta =  np.array([])
+        self.y_f = np.array([])
+        self.y_v = np.array([])           
+        
 
     def next_recommendation(self):
         """
@@ -24,10 +63,19 @@ class BO_algo():
         recommendation: np.ndarray
             1 x domain.shape[0] array containing the next point to evaluate
         """
-
-        # TODO: enter your code here
+        
         # In implementing this function, you may use optimize_acquisition_function() defined below.
-        raise NotImplementedError
+        # At beginning draw random theta
+        if(self.theta.shape[0]==0):
+            #print("random draw")
+            x_next = np.asarray([[random.uniform(0,5)]])
+            self.t = 1
+            #print(x_next)
+        else :
+            self.t = self.t + 1
+            x_next = self.optimize_acquisition_function()
+
+        return x_next
 
 
     def optimize_acquisition_function(self):
@@ -72,9 +120,28 @@ class BO_algo():
         af_value: float
             Value of the acquisition function at x
         """
+        #self.sqrt_beta_f = math.sqrt(2*math.log(5*(self.t**2)*(math.pi**2)/6)/5)
+        #self.sqrt_beta_v = math.sqrt(2*math.log(5*(self.t**2)*(math.pi**2)/6)/5)     
+        self.sqrt_beta_f = 1.0
+        self.sqrt_beta_v = 1.0
 
-        # TODO: enter your code here
-        raise NotImplementedError
+        x_np = np.reshape(x, (-1,1))
+        mu_f, sigma_f = self.gp_f.predict(x_np, return_std=True)
+        mu_v, sigma_v = self.gp_v.predict(x_np, return_std=True)
+
+        constraint = 1 - NormalDist(mu=mu_v, sigma=sigma_v).cdf(self.speed_min - self.prior_mean_v) 
+        #constraint = NormalDist(mu=mu_v, sigma=sigma_v).cdf(0) - NormalDist(mu=mu_v, sigma=sigma_v).cdf(self.speed_min - self.prior_mean_v)
+        
+        #if (constraint<1e-1) :
+        #    print(constraint)
+        #   af_value = constraint
+        #else :
+        af_value = (mu_f + self.sqrt_beta_f*sigma_f) + constraint*(mu_v+ self.prior_mean_v + self.sqrt_beta_v*sigma_v)
+        #af_value = (mu_f + self.sqrt_beta_f*sigma_f)*(mu_v + self.prior_mean_v - self.sqrt_beta_v*sigma_v)
+ 
+        return af_value       
+
+     
 
 
     def add_data_point(self, x, f, v):
@@ -91,8 +158,19 @@ class BO_algo():
             Model training speed
         """
 
-        # TODO: enter your code here
-        raise NotImplementedError
+        self.theta = np.append(self.theta, x[0])
+        self.theta = np.reshape(self.theta, (-1,1))
+        self.y_f = np.append(self.y_f,f)
+        self.y_v = np.append(self.y_v, v)
+
+        self.gp_f.fit(self.theta, self.y_f)
+        self.gp_v.fit(self.theta, self.y_v - self.prior_mean_v) 
+        #self.gp_v.fit(self.theta, self.y_v) 
+
+        #print(self.theta)
+        #print(self.y_f)
+        #print(self.y_v)
+  
 
     def get_solution(self):
         """
@@ -103,9 +181,24 @@ class BO_algo():
         solution: np.ndarray
             1 x domain.shape[0] array containing the optimal solution of the problem
         """
+                
+        lim_sel = self.y_v > self.speed_min
+        if(np.count_nonzero(lim_sel)>0):
+            idx_sel = self.y_f[lim_sel].argmax()
+            theta_temp = self.theta[lim_sel]
+            #print(lim_sel)
+            #print(idx_sel)
+            #print(self.t)
+            x_opt = theta_temp[idx_sel]
 
-        # TODO: enter your code here
-        raise NotImplementedError
+            y_v_temp = self.y_v[lim_sel]
+            print(y_v_temp[idx_sel])
+        else :
+            self.gp_f.fit(self.theta, self.y_f)
+            self.gp_v.fit(self.theta, self.y_v - self.prior_mean_v)
+            x_opt = self.optimize_acquisition_function()      
+        return x_opt
+
 
 
 """ Toy problem to check code works as expected """
